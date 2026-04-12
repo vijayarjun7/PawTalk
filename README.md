@@ -17,6 +17,12 @@ A local Streamlit app that listens to dog bark audio and makes a playful guess a
 
 > **Honest caveat:** PawTalk is a gift app built on audio signal analysis. It is not a dog-language translator. Mood estimates are acoustic guesses, not behavioral science. Results are for fun and inspiration only.
 
+**Live app → [pawtalk-buddy.streamlit.app](https://pawtalk-buddy.streamlit.app)**
+&nbsp;&nbsp;|&nbsp;&nbsp;
+**HF Space → [huggingface.co/spaces/Vijayarv07/PawTalk](https://huggingface.co/spaces/Vijayarv07/PawTalk)**
+&nbsp;&nbsp;|&nbsp;&nbsp;
+**GitHub → [vijayarjun7/PawTalk](https://github.com/vijayarjun7/PawTalk)**
+
 ---
 
 ## 🎁 Why This Exists
