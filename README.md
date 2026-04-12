@@ -1,3 +1,14 @@
+---
+title: PawTalk
+emoji: 🐾
+colorFrom: orange
+colorTo: teal
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+---
+
 # PawTalk 🐾
 
 **Dog Bark Mood Analyzer & Voice Command Coach**
