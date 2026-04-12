@@ -1,0 +1,16 @@
+# PawTalk dependencies
+# Python 3.9–3.12 recommended. Python 3.13+ may lack numba wheels;
+# PawTalk will fall back to scipy-only mode automatically in that case.
+
+streamlit>=1.32.0
+librosa>=0.10.1
+numpy>=1.24.0
+soundfile>=0.12.1
+scipy>=1.11.0
+matplotlib>=3.7.0
+audioread>=3.0.0   # required by librosa for MP3 decoding via ffmpeg/audioread
+
+# Optional: Hugging Face model (secondary signal in bark analyzer)
+# The app runs without these — install for the "Audio Model Insight" feature
+transformers>=4.35.0
+torch>=2.0.0
