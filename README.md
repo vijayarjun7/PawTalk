@@ -9,13 +9,9 @@ pinned: false
 license: mit
 ---
 
-# PawTalk 🐾
+# PawTalk — AI-Powered Dog Bark Analyzer & Voice Command Coach
 
-**Dog Bark Mood Analyzer & Voice Command Coach**
-
-A local Streamlit app that listens to dog bark audio and makes a playful guess about what your dog might be feeling — and coaches you on how to deliver clearer training commands. No cloud APIs, no subscriptions, no account required.
-
-> **Honest caveat:** PawTalk is a gift app built on audio signal analysis. It is not a dog-language translator. Mood estimates are acoustic guesses, not behavioral science. Results are for fun and inspiration only.
+Analyze your dog's vocalizations with a hybrid AI + rule-based system, and get feedback on how clearly you're delivering training commands.
 
 **Live app → [pawtalk-buddy.streamlit.app](https://pawtalk-buddy.streamlit.app)**
 &nbsp;&nbsp;|&nbsp;&nbsp;
@@ -25,32 +21,24 @@ A local Streamlit app that listens to dog bark audio and makes a playful guess a
 
 ---
 
-## 🎁 Why This Exists
+## Quick Demo
 
-This project was built as a personalized gift — combining audio analysis, a rule-based classifier, a Hugging Face secondary signal, and deliberately playful UX.
+1. Upload a bark recording or record directly in the browser
+2. Get a predicted behavioral state — excited, alert, anxious, playful, or warning
+3. Read the playful AI-assisted interpretation
+4. Optionally record yourself giving a command and get delivery coaching
 
-The goal is not accuracy. The goal is experience.
-
----
-
-## 🚀 Quick Demo
-
-1. Upload a dog bark audio file (WAV recommended, 2–10 seconds)
-2. Get a mood prediction — excited, alert, anxious, playful, or warning
-3. Read the playful "translation" in your chosen style
-4. Optionally upload your own voice to get dog-friendly command feedback
-
-No account. No cloud. Runs locally.
+No account. No subscription. Runs locally.
 
 ---
 
 ## Features
 
-### 🐕 Dog → Human: Bark Analyzer
+### Bark → Human: Behavioral State Analyzer
 
-Upload a bark recording and PawTalk estimates one of five moods:
+Upload or record a dog bark. PawTalk estimates one of five states:
 
-| Mood | What it sounds like |
+| State | Signal characteristics |
 |---|---|
 | **Excited** | High energy, rapid bursts, bright tone |
 | **Playful** | Moderate energy, bouncy rhythm |
@@ -59,15 +47,15 @@ Upload a bark recording and PawTalk estimates one of five moods:
 | **Warning** | Sustained loud energy, low-pitched, deliberate |
 
 Each result includes:
-- A playful translated message in your chosen style (funny / cute / emotional)
-- A fun dog behavior fact
-- A confidence meter explaining how strong the signal was
-- An audio feature summary (energy, rhythm, brightness, burst count)
-- An optional **Audio Model Insight** panel showing secondary Hugging Face labels
+- Predicted state with confidence score (0–100)
+- Playful interpretation in your chosen style (funny / cute / emotional)
+- Source badge — AI classifier, AI+Rule blend, or rule engine
+- Audio feature summary (energy, rhythm, brightness, burst count)
+- Optional AudioSet model insight panel
 
-### 🗣️ Human → Dog: Voice Command Coach
+### Human → Dog: Voice Command Coach
 
-Upload a clip of yourself saying a command (e.g. "Sit", "Stay", "Come"). PawTalk evaluates four dimensions of your delivery:
+Record or upload yourself saying a command ("Sit", "Stay", "Come"). PawTalk evaluates four dimensions:
 
 | Dimension | What it measures |
 |---|---|
@@ -76,84 +64,276 @@ Upload a clip of yourself saying a command (e.g. "Sit", "Stay", "Come"). PawTalk
 | **Duration** | Too short / ideal / slightly long / too long |
 | **Pace** | Slow / moderate / rapid-fire |
 
-Returns an overall grade (Excellent → Unclear), a targeted recommendation, a suggested example command, and specific tips per dimension.
+Returns an overall grade (Excellent → Unclear) with specific tips per dimension.
+
+### Other Features
+
+- **In-browser recording** via microphone (requires `streamlit-mic-recorder`)
+- **File upload** for WAV, MP3, FLAC, OGG
+- **Session caching** — re-uploading the same file reuses the cached result instantly
+- **Style switching** — change translation style without re-running analysis
+- **Fallback-safe** — app works with no AI model, no internet, and no GPU
 
 ---
 
 ## How It Works
 
-### 1. Audio feature extraction (`utils/audio_features.py`)
+```
+Audio input (upload or mic recording)
+    │
+    ▼
+1. Load + normalize → mono 16 kHz float32
+    │
+    ▼
+2. Feature extraction (librosa)
+   RMS energy, ZCR, spectral centroid, pitch (pyin/yin),
+   tempo, beat regularity, pause/burst counts, MFCCs
+    │
+    ├──► 3a. Rule-based classifier
+    │         Normalised features → weighted mood scores → veto layer
+    │         Always runs. No downloads. No network.
+    │
+    ├──► 3b. AI classifier (when checkpoint exists)
+    │         Wav2Vec2-base encoder → mean-pool → linear head
+    │         Pretrained on speech, fine-tuned on labeled bark clips
+    │         Returns top-1 mood + top-2 + per-class probabilities
+    │
+    ▼
+4. Combiner: AI result + rule fallback
+   AI confident (≥70%)  → AI is primary
+   AI moderate (45–70%) → AI mood, blended confidence
+   AI uncertain (<45%)  → rule engine result
+    │
+    ▼
+5. Optional: HF AudioSet model (MIT/ast-finetuned-audioset-10-10-0.4593)
+   Agreement boosts confidence (+15 max)
+   Disagreement surfaced as context, never overrides
+    │
+    ▼
+6. Translation + UI rendering
+```
 
-Every uploaded clip passes through librosa to extract a fixed set of numeric features:
+---
 
-- **RMS energy** — overall loudness and its variation
-- **Zero-crossing rate** — spectral noisiness / tonality
-- **Spectral centroid & rolloff** — brightness and harmonic content
-- **Tempo & beat regularity** — rhythm and delivery pace
-- **F0 (pitch)** — fundamental frequency via probabilistic YIN
-- **Pause count & burst count** — detected silence gaps and energy spikes
+## AI Model Status
 
-If librosa is unavailable (e.g. numba wheel missing on Python 3.14), a scipy-only fallback computes the subset of features that don't require FFT mel processing.
+PawTalk includes a complete supervised training pipeline built on [facebook/wav2vec2-base](https://huggingface.co/facebook/wav2vec2-base).
 
-### 2. Rule-based bark classifier (`utils/bark_classifier.py`)
+**What is implemented:**
+- Full training pipeline (`prepare_dataset.py`, `train_classifier.py`, `evaluate_classifier.py`)
+- Inference module with confidence thresholds and rule-engine fallback
+- Evaluation: accuracy, macro-F1, per-class P/R/F1, confusion matrix
 
-This is the primary source of truth. Features are normalised to [0, 1] and each of the five moods is scored by a small weighted formula. A secondary veto layer hard-blocks physically impossible predictions (e.g. "warning" requires genuinely sustained loud energy). Confidence (0–100) is computed from the winner's raw score plus the margin over the runner-up.
+**What depends on your dataset:**
+- Model quality is entirely a function of the labeled bark clips you supply
+- No labeled dog bark dataset is included in this repository
+- No accuracy numbers are claimed — they would only be meaningful against a real dataset
 
-This classifier runs entirely locally with no model downloads.
+**Current demo behavior:**
+- If `checkpoints/best_model.pt` is present → AI classifier runs as primary
+- If no checkpoint → rule-based classifier runs transparently
+- The UI always shows which system produced the result
 
-### 3. Hugging Face enhancement layer (`utils/hf_audio.py`)
+See [training/DATA_SOURCES.md](training/DATA_SOURCES.md) for where to obtain real labeled bark data.
 
-An optional secondary signal using [`MIT/ast-finetuned-audioset-10-10-0.4593`](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593) — an Audio Spectrogram Transformer trained on AudioSet's 527 audio categories.
+---
 
-How it interacts with the rule engine:
+## Fallback Logic
 
-- The rule-based mood is **always the final answer**. The HF model never overrides it.
-- If the HF top label maps to the same mood → confidence is nudged up (max +15 pts).
-- If the HF top label maps to a different mood → confidence is nudged down (-5 pts) and both signals are shown.
-- If no HF label maps to any PawTalk mood (common for generic clips) → confidence is unchanged.
+The app never breaks regardless of what is installed or available.
 
-The HF layer is entirely optional. If `transformers` or `torch` are not installed, the app runs normally and the model insight panel is simply absent.
+```
+torch + transformers installed AND checkpoint exists
+    → AI classifier (primary)
 
-### 4. Translation and message layer (`utils/translator.py`)
+AI model uncertain OR confidence too low
+    → Rule engine (fallback)
 
-Pure text. No audio logic lives here. Each mood has three style banks (funny / cute / emotional), each with multiple entries. The selection is deterministic — same file always picks the same message. Swap the sidebar style any time without re-analyzing.
+torch/transformers not installed OR no checkpoint
+    → Rule engine (always available)
+
+HF AudioSet model unavailable
+    → Confidence unchanged, insight panel hidden
+```
+
+The rule-based classifier runs entirely locally — no network, no model download, no GPU required.
+
+---
+
+## Training Pipeline
+
+Requires: `torch`, `transformers`, `soundfile` or `librosa`.
+
+**Step 1 — Prepare labeled data**
+
+Organize your bark clips into per-label directories:
+
+```
+data/raw/
+    excited/   clip1.wav  clip2.mp3  …
+    playful/   …
+    alert/     …
+    anxious/   …
+    warning/   …
+```
+
+Then run:
+
+```bash
+python training/prepare_dataset.py \
+    --data_dir data/raw \
+    --out_dir  data/processed \
+    --split    0.70 0.15 0.15 \
+    --clip_sec 3.0
+```
+
+Outputs normalized 16kHz WAV clips in `data/processed/train|val|test/<label>/`, plus `label_map.json`.
+
+**Step 2 — Train**
+
+```bash
+python training/train_classifier.py \
+    --data_dir      data/processed \
+    --out_dir       checkpoints \
+    --epochs        30 \
+    --freeze_encoder              \
+    --unfreeze_at   20
+```
+
+`--freeze_encoder` trains only the linear head for the first 20 epochs, then unfreezes the full encoder for fine-tuning. Saves `checkpoints/best_model.pt` on every val-accuracy improvement.
+
+**Step 3 — Evaluate**
+
+```bash
+python training/evaluate_classifier.py \
+    --checkpoint            checkpoints/best_model.pt \
+    --confusion_matrix_png  checkpoints/confusion.png
+```
+
+Prints per-class precision, recall, F1, overall accuracy, macro-F1, top-2 accuracy, and saves a confusion matrix image.
+
+**Step 4 — Use in the app**
+
+Once `checkpoints/best_model.pt` exists, the Streamlit app picks it up automatically on the next run. No code changes needed.
+
+---
+
+## Project Structure
+
+```
+PawTalk/
+├── app.py                          # Streamlit entry point — thin controller
+├── requirements.txt
+├── Dockerfile                      # HF Spaces / Docker deployment
+│
+├── utils/
+│   ├── audio_features.py           # librosa feature extraction (shared)
+│   ├── bark_classifier.py          # Rule-based mood classifier
+│   ├── ai_bark_classifier.py       # AI inference module + combiner
+│   ├── ai_bark_classifier_model.py # BarkClassifier nn.Module definition
+│   ├── hf_audio.py                 # HF AudioSet secondary signal
+│   ├── audio_input.py              # Upload / mic-record widget
+│   ├── voice_analyzer.py           # Voice command quality assessor
+│   ├── translator.py               # Playful message content
+│   └── ui_helpers.py               # Streamlit rendering helpers
+│
+├── training/
+│   ├── label_config.json           # Canonical label set (source of truth)
+│   ├── prepare_dataset.py          # Normalize + split raw audio
+│   ├── train_classifier.py         # Fine-tune Wav2Vec2 + head
+│   ├── evaluate_classifier.py      # Metrics + confusion matrix
+│   └── DATA_SOURCES.md             # Where to get labeled bark data
+│
+├── checkpoints/                    # Saved model weights (not committed)
+│   └── best_model.pt
+│
+└── data/                           # Training data (not committed)
+    ├── raw/
+    └── processed/
+```
+
+---
+
+## Screenshots
+
+| Bark Analyzer | Voice Command Coach |
+|---|---|
+| ![Bark analysis result](assets/screenshots/bark.png) | ![Voice coach result](assets/screenshots/voice.png) |
+
+*Run the app locally and save screenshots to `assets/screenshots/` to populate this table.*
+
+---
+
+## Why This Project Exists
+
+PawTalk was built as a personalized gift — an AI-powered toy that combines real audio analysis with playful UX. The goal was never accuracy. The goal was experience, honesty, and a system that is technically interesting without overclaiming what it can do.
+
+The supervised training pipeline was added to show how a production-grade bark classifier would be built — using a pretrained speech encoder, fine-tuned classification head, proper train/val/test splits, and a principled fallback strategy.
+
+---
+
+## Limitations
+
+**This is not a dog-language translator.** PawTalk applies acoustic signal analysis to make a plausible guess about a dog's behavioral state. The "translations" are pre-written creative text matched to that guess.
+
+**Audio quality matters.** Background noise, room echo, and microphone distance all degrade feature extraction. A clean recording in a quiet room will give more interpretable results.
+
+**The AI model is only as good as its training data.** Wav2Vec2 was pretrained on human speech, not dog vocalizations. Fine-tuning on a small or poorly-labeled dataset will produce unreliable predictions. The rule engine is a meaningful fallback precisely because of this.
+
+**The HF AudioSet model is a general audio classifier.** It was trained on 527 broad audio categories, not bark emotions. It provides supporting evidence only — never the deciding signal.
+
+**The Voice Command Coach is not a dog trainer.** Tips are based on general principles from dog training literature and acoustic signal properties. They are not a substitute for working with a qualified trainer.
 
 ---
 
 ## Tech Stack
 
-| Component | Library |
+| Layer | Technology |
 |---|---|
 | UI | Streamlit |
-| Audio loading | soundfile (WAV/FLAC/OGG), librosa (MP3 fallback) |
+| Audio loading | soundfile, librosa |
 | Feature extraction | librosa, numpy, scipy |
+| AI encoder | Hugging Face Transformers — `facebook/wav2vec2-base` |
+| Training | PyTorch, AdamW, CosineAnnealingLR |
 | Rule classifier | Pure Python / numpy |
-| Waveform display | matplotlib, librosa.display |
-| HF model | transformers, torch |
+| Secondary signal | `MIT/ast-finetuned-audioset-10-10-0.4593` |
+| Waveform display | matplotlib |
+| In-browser recording | streamlit-mic-recorder |
+| Deployment | Docker (HF Spaces), Streamlit Cloud |
 
 ---
 
-## Installation
+## Getting Started
 
-**Python 3.9–3.12 recommended.** Python 3.13+ may lack numba wheels; PawTalk falls back to scipy-only mode automatically in that case.
-
-### 1. Install core dependencies
+**Python 3.9–3.12 recommended.** Python 3.13+ may lack numba wheels; PawTalk falls back to scipy-only mode automatically.
 
 ```bash
+# 1. Install core dependencies
 pip install -r requirements.txt
+
+# 2. Run the app
+streamlit run app.py
 ```
 
-### 2. Install Hugging Face dependencies (optional)
+Open [http://localhost:8501](http://localhost:8501) in your browser.
 
-The app works without these. Install them to enable the Audio Model Insight panel:
+**Optional: enable AI bark classifier**
 
 ```bash
-pip install transformers torch
+# Already included in requirements.txt — install torch + transformers if not present
+pip install torch transformers
+
+# Then train your model (requires labeled data — see training/DATA_SOURCES.md)
+python training/train_classifier.py --data_dir data/processed --out_dir checkpoints
 ```
 
-On first use, the AST model weights (~90 MB) download automatically from the Hugging Face Hub. Subsequent runs use the local cache.
+**Optional: enable in-browser recording**
 
-### 3. Install ffmpeg (optional, for MP3 support)
+```bash
+pip install streamlit-mic-recorder
+```
+
+**Optional: MP3 support**
 
 ```bash
 # macOS
@@ -163,149 +343,8 @@ brew install ffmpeg
 sudo apt install ffmpeg
 ```
 
-WAV, FLAC, and OGG files work without ffmpeg.
+WAV, FLAC, and OGG work without ffmpeg.
 
 ---
 
-## Running Locally
-
-```bash
-streamlit run app.py
-```
-
-Open [http://localhost:8501](http://localhost:8501) in your browser.
-
-The sidebar lets you set an optional dog name and choose a translation style. Both settings update the display without re-running audio analysis.
-
----
-
-## Required Dependencies
-
-```
-streamlit>=1.32.0
-librosa>=0.10.1
-numpy>=1.24.0
-soundfile>=0.12.1
-scipy>=1.11.0
-matplotlib>=3.7.0
-audioread>=3.0.0
-
-# Optional — enables the Audio Model Insight panel
-transformers>=4.35.0
-torch>=2.0.0
-```
-
----
-
-## Project Structure
-
-```
-PawTalk/
-├── app.py                 # Streamlit entry point — thin controller only
-├── requirements.txt
-├── README.md
-├── assets/
-│   ├── sample_audio/      # Drop test WAV files here (not committed to git)
-│   └── screenshots/       # bark.png, voice.png for this README
-└── utils/
-    ├── __init__.py
-    ├── audio_features.py  # librosa feature extraction — shared by both tabs
-    ├── bark_classifier.py # Rule-based mood classifier (primary source of truth)
-    ├── hf_audio.py        # Hugging Face secondary signal + combiner
-    ├── voice_analyzer.py  # Human voice command quality assessor
-    ├── translator.py      # All playful message content — edit this to change personality
-    └── ui_helpers.py      # All Streamlit rendering — edit this to change layout
-```
-
----
-
-## 📸 Screenshots
-
-| Bark Analyzer | Voice Command Coach |
-|---|---|
-| ![Bark analysis result showing mood card and confidence meter](assets/screenshots/bark.png) | ![Voice coach result showing grade and tip cards](assets/screenshots/voice.png) |
-
-> Screenshots not yet captured — run the app locally and save them to `assets/screenshots/` to populate this table.
-
----
-
-## 🧪 Testing
-
-For a structured testing checklist and scenario walkthrough, see [TESTING.md](./TESTING.md).
-
----
-
-## Performance & Caching Behaviour
-
-### Rule-based mode — always available
-
-The librosa feature extractor and rule-based classifier run entirely locally with no network calls. They are available immediately on every cold start, even with no internet connection.
-
-### Hugging Face model — lazy, cached after first load
-
-The HF pipeline is **not loaded at app startup**. It loads on the first bark analysis that requests it. On a hosted environment (Streamlit Cloud, Railway, etc.) that first request may be slower than usual — the model weights (~90 MB) download once and are then cached locally.
-
-| Scenario | Behaviour |
-|---|---|
-| transformers / torch not installed | App runs normally; Audio Model Insight panel is hidden |
-| First analysis after cold start | HF model loads once; a "loading model…" notice is shown |
-| Subsequent analyses in same session | Pipeline is reused from `st.cache_resource` — no reload |
-| Model download fails (no internet) | App continues with rule-only result; friendly notice shown |
-| Worker restart on hosted platform | `st.cache_resource` reloads on the next request |
-
-### Audio results — cached per file
-
-Analysis results are stored in `st.session_state` keyed to a content hash of the uploaded file. Re-uploading the same file reuses the cached result instantly. Changing the dog name or translation style updates the display without re-running any audio processing.
-
----
-
-## How to Test Without a Dog
-
-You don't need a dog to try the app. Here are some practical options:
-
-**Free sample audio datasets**
-- [ESC-50](https://github.com/karolpiczak/ESC-50) — Environmental Sound Classification dataset includes dog bark samples (WAV format, ready to use).
-- [UrbanSound8K](https://urbansounddataset.weebly.com/urbansound8k.html) — includes a "dog_bark" class.
-- [Freesound.org](https://freesound.org) — search "dog bark" and download CC-licensed WAV clips.
-
-**YouTube or online clips**
-- Use publicly available dog bark clips for personal local testing only. Do not redistribute audio you do not own.
-- Look for clips that isolate a single type of bark (excited greeting bark, alert bark, whining) to see how mood prediction varies.
-
-**Voice Command Coach**
-- Record yourself saying "Sit", "Stay", or "Come" using your phone's voice memo app, export as WAV or M4A, and upload.
-- Try variations: whisper vs. projected voice, one word vs. a full sentence, steady tone vs. rising pitch — and compare the grades.
-
-**Edge cases worth testing**
-- Silence or near-silence — should fail gracefully with a "too short" or low-confidence result
-- Background music or TV audio — the classifier will likely return "unknown" or a low-confidence mood
-- Non-dog animal sounds — cat meowing, bird chirping — the rule engine may misfire; this is expected
-- A very short clip (under 0.3 s) — triggers an explicit "too short" error with a clear suggestion
-
----
-
-## Limitations
-
-**No real dog-language translation.** PawTalk does not decode dog communication. It applies acoustic heuristics — the same techniques used in general audio analysis — to make a plausible guess about emotional state. The "translations" are pre-written creative text matched to that guess.
-
-**Mood inference is approximate.** The rule-based classifier uses thresholds tuned on general acoustic intuition, not a dataset of labeled dog vocalizations. Two different dogs barking "excitedly" may produce different acoustic profiles; only one may match.
-
-**Results depend on audio quality.** Background noise, room echo, microphone distance, and recording clipping all degrade feature extraction. A clip recorded on a phone in a quiet room will give more meaningful results than one captured in a noisy park.
-
-**The Hugging Face model is a general audio classifier.** The AST model was trained on AudioSet — a large dataset of general environmental sounds, not dog emotions. Most dog bark clips will score highly on broad labels like "Dog" or "Animal" rather than specific emotion-related labels. When specific labels do appear (e.g. "Growling", "Whimper"), they're used as supporting evidence only — never as the deciding signal.
-
-**The Voice Command Coach is not a dog trainer.** Delivery tips are based on general principles from dog training literature (short commands, consistent tone, clear energy). They are not a substitute for working with a qualified trainer, especially for behavioral issues.
-
----
-
-## Possible Future Improvements
-
-- **Recorded audio input** — allow recording directly in the browser rather than requiring a file upload
-- **Comparison mode** — upload two bark clips side by side to compare mood profiles
-- **Custom mood vocabulary** — let users label their own dog's sounds to build a personalized history
-- **Fine-tuned HF model** — replace the general AudioSet model with one fine-tuned specifically on dog vocalizations if a suitable labeled dataset becomes available
-- **Batch analysis** — analyze a folder of clips at once for shelter or research use
-
----
-
-Made with 🐾, librosa, and a healthy respect for the limits of audio analysis.
+Made with librosa, PyTorch, and a healthy respect for the limits of audio analysis.

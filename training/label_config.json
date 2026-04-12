@@ -1,0 +1,24 @@
+{
+  "_comment": "Canonical label set for PawTalk's AI bark classifier. This file is the single source of truth for label names and their integer indices. Both prepare_dataset.py and the inference module read from this. Do not reorder entries — the integer index is baked into saved checkpoints.",
+  "labels": [
+    "excited",
+    "playful",
+    "alert",
+    "anxious",
+    "warning"
+  ],
+  "label_map": {
+    "excited": 0,
+    "playful": 1,
+    "alert":   2,
+    "anxious": 3,
+    "warning": 4
+  },
+  "descriptions": {
+    "excited":  "High energy, rapid bursts — greeting bark, pre-walk anticipation",
+    "playful":  "Moderate energy, bouncy rhythm — fetch, tug-of-war, play invitation",
+    "alert":    "Sharp bursts with silences — stranger, unexpected noise, territorial",
+    "anxious":  "Irregular pattern, many pauses, variable energy — separation, fear, stress",
+    "warning":  "Sustained loud energy, low-pitched, deliberate — intruder, threat boundary"
+  }
+}

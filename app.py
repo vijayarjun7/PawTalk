@@ -17,11 +17,12 @@ Architecture
 - Every error path shows a friendly fallback message and a suggestion.
 """
 
-import hashlib
-
 import streamlit as st
 
-from utils import audio_features, bark_classifier, voice_analyzer, translator, ui_helpers, hf_audio
+from utils import (
+    audio_features, audio_input, bark_classifier, voice_analyzer,
+    translator, ui_helpers, hf_audio, ai_bark_classifier,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Page config — must be the very first Streamlit call
@@ -147,17 +148,6 @@ def _render_sidebar() -> tuple[str | None, str]:
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _file_key(f) -> str:
-    """
-    Stable cache key derived from the first 64 KB of file content.
-    Content-based so two different files with identical names/sizes get
-    different keys, and re-uploading the same file reuses the cached result.
-    """
-    f.seek(0)
-    header = f.read(65_536)   # 64 KB is enough to distinguish files cheaply
-    f.seek(0)
-    return hashlib.blake2b(header, digest_size=16).hexdigest()
-
 
 def _clear_bark_cache():
     """Remove all cached bark results so the next upload starts fresh."""
@@ -194,38 +184,22 @@ def _bark_tab(dog_name: str | None, style: str) -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Upload ────────────────────────────────────────────────────────────────
-    uploaded = st.file_uploader(
-        "Upload a bark recording",
-        type=["wav", "mp3", "ogg", "flac"],
-        help="Best results: 2–10 seconds of clear barking with minimal background noise. WAV recommended.",
-        key="bark_uploader",
-        on_change=_clear_bark_cache,
+    # ── Audio input (upload or in-browser recording) ──────────────────────────
+    audio_bytes, cache_key = audio_input.get_audio_input(
+        tab_key="bark",
+        cache_prefix="bark_result_",
+        cache_clear_fn=_clear_bark_cache,
+        upload_label="Upload a bark recording",
+        upload_help="Best results: 2–10 seconds of clear barking with minimal background noise. WAV recommended.",
+        empty_prompt_icon="🎙️",
+        empty_prompt_text="Waiting for your pup's vocal debut…",
+        empty_prompt_sub="Upload a WAV, MP3, OGG, or FLAC file above.",
+        record_button_label="🎙️ Start recording bark",
+        record_stop_label="⏹️ Stop",
     )
 
-    if uploaded is None:
-        st.markdown(
-            """
-            <div style="text-align:center; padding:2.5rem 1rem; color:#aaa;">
-                <div style="font-size:3rem;">🎙️</div>
-                <div style="font-size:1rem; margin-top:0.5rem;">
-                    Waiting for your pup's vocal debut…
-                </div>
-                <div style="font-size:0.82rem; margin-top:0.3rem;">
-                    Upload a WAV, MP3, OGG, or FLAC file above.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    if audio_bytes is None:
         return
-
-    # ── Audio player ──────────────────────────────────────────────────────────
-    st.audio(uploaded)
-    st.caption(f"📁 {uploaded.name}  ·  {uploaded.size / 1024:.1f} KB")
-
-    # ── Analyze button ────────────────────────────────────────────────────────
-    cache_key = "bark_result_" + _file_key(uploaded)
 
     col_btn, col_note = st.columns([1, 3])
     with col_btn:
@@ -243,11 +217,6 @@ def _bark_tab(dog_name: str | None, style: str) -> None:
 
     # ── Processing ────────────────────────────────────────────────────────────
     if analyze and cache_key not in st.session_state:
-        # Read the file bytes once here; all downstream calls use these bytes
-        # so the UploadedFile pointer is never touched again during this run.
-        uploaded.seek(0)
-        audio_bytes = uploaded.read()
-
         with st.spinner("Sniffing the audio… 🐽"):
             try:
                 y, sr = audio_features.load_audio_from_bytes(audio_bytes)
@@ -268,25 +237,51 @@ def _bark_tab(dog_name: str | None, style: str) -> None:
                 )
                 return
 
-            # Rule-based classification always runs (no network, no downloads)
+            # ── Rule-based classification (always runs — no downloads) ─────────
             rule_result = bark_classifier.classify_bark_mood(feats)
 
-            # HF model classification — optional secondary signal.
-            # Show a status note on first call: the model download (~90 MB) or
-            # cold-start load can take several seconds.
+            # ── AI supervised classifier (primary when checkpoint exists) ──────
+            # Priority: AI confident → AI moderate → rule engine fallback
+            # The AI path is entirely optional; missing checkpoint = rule only.
+            if ai_bark_classifier.AI_AVAILABLE:
+                if ai_bark_classifier.checkpoint_exists() and not ai_bark_classifier.AI_MODEL_LOADED:
+                    st.caption("🤖 Loading AI bark model for the first time…")
+                ai_result = ai_bark_classifier.classify_bark_ai(y, sr)
+                result = ai_bark_classifier.combine_ai_and_rule(ai_result, rule_result)
+
+                # Surface source to the user
+                source = result.get("source", "rule_fallback")
+                if source == "ai_confident":
+                    st.caption("✅ AI classifier — high confidence")
+                elif source == "ai_moderate":
+                    st.caption("🔶 AI classifier — moderate confidence; rule engine consulted")
+                else:
+                    st.caption("ℹ️ Rule engine — AI model unavailable or uncertain")
+            else:
+                # torch/transformers not installed — rule engine only
+                ai_result = {"available": False}
+                result = {
+                    **rule_result,
+                    "ai":     ai_result,
+                    "source": "rule_fallback",
+                }
+
+            # ── Optional HF AudioSet secondary signal ─────────────────────────
+            # Runs on top of whichever result was chosen above.
             hf_loaded = hf_audio._pipeline_cache_is_ready()
             if hf_audio.HF_AVAILABLE and not hf_loaded:
-                st.caption("🤖 Loading audio model for the first time — this may take a moment…")
+                st.caption("🤖 Loading AudioSet model for the first time…")
             hf_result = hf_audio.classify_audio(y, sr)
             if hf_audio.HF_AVAILABLE and not hf_result.get("success"):
-                st.caption(f"ℹ️ Running in rule-only mode ({hf_result.get('error', 'model unavailable')})")
+                st.caption(f"ℹ️ AudioSet model unavailable ({hf_result.get('error', '')})")
 
-            # Combine: rule-based is authoritative; HF only adjusts confidence
-            result = hf_audio.combine_results(rule_result, hf_result)
+            # Attach HF insight without changing the mood (combine_results is
+            # additive on confidence only, rule_result is already baked into
+            # result — pass it again just for the HF merge step).
+            result = hf_audio.combine_results(result, hf_result)
 
-            # Store result and the raw bytes (not the waveform array) so the
-            # waveform can be reconstructed on re-render without keeping a large
-            # numpy array in session state for the lifetime of the session.
+            # Store bytes (not numpy array) so waveform can be reconstructed
+            # on re-render without holding a large array in session state.
             st.session_state[cache_key] = {
                 "audio_bytes": audio_bytes,
                 "sr":          sr,
@@ -330,6 +325,14 @@ def _bark_tab(dog_name: str | None, style: str) -> None:
     mood_emoji  = translation["emoji"]
     mood_display = mood.replace("_", " ").title() if mood != "unknown" else "Unknown"
 
+    source = result.get("source", "rule_fallback")
+    source_labels = {
+        "ai_confident": ("🤖 AI", "#06D6A0"),
+        "ai_moderate":  ("🤖 AI+Rule", "#74B9FF"),
+        "rule_fallback": ("📐 Rule", "#B2BEC3"),
+    }
+    source_text, source_color = source_labels.get(source, ("📐 Rule", "#B2BEC3"))
+
     m1, m2, m3 = st.columns(3)
     with m1:
         st.markdown(
@@ -341,6 +344,8 @@ def _bark_tab(dog_name: str | None, style: str) -> None:
                 <div style="font-size:1.1rem; font-weight:800; color:{mood_color};">
                     {mood_display}
                 </div>
+                <div style="font-size:0.72rem; color:{source_color}; font-weight:600;
+                            margin-top:0.15rem;">{source_text}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -430,38 +435,22 @@ def _voice_tab() -> None:
                 """
             )
 
-    # ── Upload ────────────────────────────────────────────────────────────────
-    uploaded = st.file_uploader(
-        "Upload your voice command",
-        type=["wav", "mp3", "ogg", "flac"],
-        help="Aim for 0.5–3 seconds. Say one command word clearly. WAV recommended.",
-        key="voice_uploader",
-        on_change=_clear_voice_cache,
+    # ── Audio input (upload or in-browser recording) ──────────────────────────
+    audio_bytes, cache_key = audio_input.get_audio_input(
+        tab_key="voice",
+        cache_prefix="voice_result_",
+        cache_clear_fn=_clear_voice_cache,
+        upload_label="Upload your voice command",
+        upload_help="Aim for 0.5–3 seconds. Say one command word clearly. WAV recommended.",
+        empty_prompt_icon="🗣️",
+        empty_prompt_text="Waiting for your command, human…",
+        empty_prompt_sub='Record yourself saying "Sit" or "Stay", then upload it here.',
+        record_button_label="🎙️ Start recording command",
+        record_stop_label="⏹️ Stop",
     )
 
-    if uploaded is None:
-        st.markdown(
-            """
-            <div style="text-align:center; padding:2.5rem 1rem; color:#aaa;">
-                <div style="font-size:3rem;">🗣️</div>
-                <div style="font-size:1rem; margin-top:0.5rem;">
-                    Waiting for your command, human…
-                </div>
-                <div style="font-size:0.82rem; margin-top:0.3rem;">
-                    Record yourself saying "Sit" or "Stay", then upload it here.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    if audio_bytes is None:
         return
-
-    # ── Audio player ──────────────────────────────────────────────────────────
-    st.audio(uploaded)
-    st.caption(f"📁 {uploaded.name}  ·  {uploaded.size / 1024:.1f} KB")
-
-    # ── Analyze button ────────────────────────────────────────────────────────
-    cache_key = "voice_result_" + _file_key(uploaded)
 
     col_btn, col_note = st.columns([1, 3])
     with col_btn:
@@ -479,9 +468,6 @@ def _voice_tab() -> None:
 
     # ── Processing ────────────────────────────────────────────────────────────
     if analyze and cache_key not in st.session_state:
-        uploaded.seek(0)
-        audio_bytes = uploaded.read()
-
         with st.spinner("Listening carefully… 👂"):
             try:
                 y, sr      = audio_features.load_audio_from_bytes(audio_bytes)
