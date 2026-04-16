@@ -189,6 +189,8 @@ def _record_mode(
 
     # mic_recorder returns a dict with keys 'bytes', 'id', 'sample_rate', etc.
     # or None if no recording has been made yet.
+    # format="wav" is required — the default "webm" produces WebM/Opus bytes that
+    # soundfile cannot decode (and librosa/audioread can only decode with ffmpeg).
     try:
         recording = mic_recorder(
             start_prompt=record_button_label,
@@ -196,6 +198,7 @@ def _record_mode(
             just_once=False,          # allow multiple recordings
             use_container_width=True,
             key=f"{tab_key}_mic",
+            format="wav",             # force WAV output; default "webm" is unsupported by soundfile
         )
     except Exception as exc:
         st.error(f"🎙️ Microphone recorder failed to load: {exc}")
@@ -229,8 +232,10 @@ def _record_mode(
         st.session_state[prev_id_key] = current_id
         cache_clear_fn()            # clear old results for this tab
 
-    # Show playback and size info
-    st.audio(io.BytesIO(raw_bytes), format="audio/wav")
+    # Show playback and size info.
+    # Use the format reported by the recorder (always "wav" when format="wav" is set above).
+    rec_format = recording.get("format", "wav")
+    st.audio(io.BytesIO(raw_bytes), format=f"audio/{rec_format}")
     st.caption(f"🎙️ Recording ready  ·  {len(raw_bytes) / 1024:.1f} KB")
 
     cache_key = _bytes_key(raw_bytes, cache_prefix)
